@@ -3,19 +3,19 @@
 #include <sel4platsupport/bootinfo.h>
 #include <stdint.h>
 
+//Aldagai globalak erazagutu eta hasieratzen dira
 const seL4_BootInfo *info;
-
-struct Nodo{
-    seL4_Word hasiera;
-    seL4_Word bukaera;
-    seL4_Word hurrengoa;
-};
 
 struct Nodo* free_list = NULL;
 struct Nodo* malloc_list = NULL;
 int alignment = 0;
 
-const seL4_Word tam = sizeof(struct Nodo);
+//Memoria mapeatzeko erabiliko den nodoaren erazagupena
+struct Nodo{
+    seL4_Word hasiera;
+    seL4_Word bukaera;
+    seL4_Word hurrengoa;
+};
 
 
 /*
@@ -26,10 +26,10 @@ const seL4_Word tam = sizeof(struct Nodo);
 **/
 seL4_Word alignment_konponketa(seL4_Word addr, int free){
 
-	if (free){
+	if (free){//Hutsuneak kudeatzen ari bagara, memoria ezin da gehiago erabili. Alignmentera egokitzeko helbidea txikiagotuko da
 		return addr - (alignment - addr%alignment);		
 	}
-	if (addr%alignment!=0){
+	if (addr%alignment!=0){ // Malloc egiten ari bagara, behar dugun memoria baina gehiago beharko da alignment-ari egokitzeko
 		return addr + (alignment - addr%alignment);
 	}
 	return addr;
@@ -54,7 +54,9 @@ int pow2(int size){
 * @return true kontsekutiboak badira. Bestela false.
 **/
 int kontsekutiboak(int i, int j){
-
+	if(info->untypedList[i+1].isDevice){
+			return 0;
+	}
     int add1 = info->untypedList[i].paddr;
     int add2 = info->untypedList[j].paddr;
 
@@ -94,18 +96,18 @@ static struct Nodo* MallocNodoAlloc(){
 * @param Memoria eskualdearen hasiera eta amaiera
 **/
 static void free_nodo_berri(seL4_Word has, seL4_Word buk){
-	static struct Nodo* oraingo_Nodoa = NULL;
+	static struct Nodo* oraingo_Nodoa = NULL;//Zerrendako azkeneko nodoak errepresentatzeko
 	static struct Nodo* aurreko_Nodoa = NULL;
 	
-	oraingo_Nodoa = FreeNodoAlloc();
+	oraingo_Nodoa = FreeNodoAlloc(); //Free Nodo bat eskatzen da
 	
-	oraingo_Nodoa->hasiera = has;
+	oraingo_Nodoa->hasiera = has; //Hasiera eta bukaera zehazten zaizkio
 	oraingo_Nodoa->bukaera = buk;
 	
-	if(free_list==NULL){
+	if(free_list==NULL){ //Zerrenda hutsik badago, lehen nodoa bera da
 		free_list = oraingo_Nodoa;
 	}
-	if(aurreko_Nodoa!=NULL)
+	if(aurreko_Nodoa!=NULL) //Zerrendan elementurik badago, Nodo berria zerrendaren bukaeran sartu
 		aurreko_Nodoa->hurrengoa = oraingo_Nodoa;
 	aurreko_Nodoa = oraingo_Nodoa;
 }
@@ -115,16 +117,16 @@ static void free_nodo_berri(seL4_Word has, seL4_Word buk){
 * @param Memoria eskualdearen hasiera eta amaiera
 **/
 static void malloc_nodo_berri(seL4_Word has, seL4_Word buk){
-	static struct Nodo* oraingo_Nodoa = NULL;
+	static struct Nodo* oraingo_Nodoa = NULL;//Zerrendako azkeneko nodoak errepresentatzeko
 	static struct Nodo* aurreko_Nodoa = NULL;
-	oraingo_Nodoa = MallocNodoAlloc();
-	oraingo_Nodoa->hasiera = has;
+	oraingo_Nodoa = MallocNodoAlloc();//Malloc Nodo bat eskatzen da
+	oraingo_Nodoa->hasiera = has;//Hasiera eta bukaera zehazten zaizkio
 	oraingo_Nodoa->bukaera = buk;
 	
-	if(malloc_list==NULL){
+	if(malloc_list==NULL){//Zerrenda hutsik badago, lehen nodoa bera da
 		malloc_list = oraingo_Nodoa;
 	}
-	if(aurreko_Nodoa!=NULL)
+	if(aurreko_Nodoa!=NULL) //Zerrendan elementurik badago, Nodo berria zerrendaren bukaeran sartu
 		aurreko_Nodoa->hurrengoa = oraingo_Nodoa;
 	aurreko_Nodoa = oraingo_Nodoa;
 }
@@ -147,17 +149,15 @@ static void init_memory_system(int alignment_value) {
 	seL4_Word hasiera = NULL;
 	seL4_Word bukaera = NULL;
 
-	for (i = 0; i < info->untyped.end-info->untyped.start - 1; i++) {
-		if (nodo_kop>4){
-			break;
-		}
-	      if (!(info->untypedList[i].isDevice)){
+	for (i = 0; i < info->untyped.end-info->untyped.start - 1; i++) { //Bootinfo datu egitura iteratzen da
+	      if (!(info->untypedList[i].isDevice)){ //Memoria eskualde erabilgarria bada
 		
-			if (hasiera==NULL){
+			if (hasiera==NULL){//Eskualde kontsekutiboen hasiera adierazi
 				hasiera = info->untypedList[i].paddr;
 			}
 			
-			if(!kontsekutiboak(i,i+1)){
+			if(!kontsekutiboak(i,i+1)){ // Hurrengo eskualdea kontsekutiboa ez bada
+				//Nodo berri bat sortu jarraian dauden eskualdeekin
 			    bukaera = info->untypedList[i].paddr+pow2(info->untypedList[i].sizeBits);
 			    bukaera = alignment_konponketa(bukaera, 1);
 			    free_nodo_berri(hasiera, bukaera);
@@ -166,8 +166,6 @@ static void init_memory_system(int alignment_value) {
 			}
 		
 	      }
-		
-
 	}
 }
 
@@ -180,17 +178,17 @@ static seL4_Word allocate(int sizeB){
 	int sizea = pow2(sizeB);
 	struct Nodo* it = free_list;
 	seL4_Word erantzuna;
-	sizea = alignment_konponketa(sizea, 0);
-	while (it!=NULL){
-		if((it->bukaera - it->hasiera) >= sizea){
-			malloc_nodo_berri(it->hasiera, it->hasiera+sizea);
+	sizea = alignment_konponketa(sizea, 0); //Sizea alignment-arekin lerrokatu
+	while (it!=NULL){ // Hutsuneen zerrenda iteratu
+		if((it->bukaera - it->hasiera) >= sizea){ //Oraingo hutsunean sartzen bada
+			malloc_nodo_berri(it->hasiera, it->hasiera+sizea); // Malloc nodo berri bat sortu erreserbatutako memoria eskualdea mapeatzeko
 			erantzuna = it->hasiera;
-			it->hasiera = it->hasiera+sizea;
+			it->hasiera = it->hasiera+sizea; // Hutsunearen nodoa eguneratu
 			break;
 		}
 		it = it->hurrengoa;
 	}
-	if (it==NULL){
+	if (it==NULL){ // Memoria espaziorik ez bada aurkitu size horretakoa, errore mezua itzuli
 		printf("Ezin izan da memoria erreserbatu\n");
 		return -1;
 	}
@@ -206,26 +204,26 @@ static void release(seL4_Word addr){
 	struct Nodo* it = malloc_list;
 	struct Nodo* askatu;
 	struct Nodo* aurreko_it = NULL;
-	while (it!=NULL){
-		if(addr==it->hasiera){
+	while (it!=NULL){ // Malloc-en zerrenda iteratu
+		if(addr==it->hasiera){ //Eskualde hori, askatu behar duguna bada, Nodoa gorde
 			askatu=it;
 			break;
 		}
 		aurreko_it = it;
 		it = it->hurrengoa;
 	}
-	if (it==NULL){
+	if (it==NULL){ // Ez bada nodo hori aurkitu, errore mezua eman
 		printf("Helbide hori ez da erreserbatua izan\n");
 		return ;
 	}
-	if (aurreko_it!=NULL){
+	if (aurreko_it!=NULL){ // Aurkitutako Nodoa, lehen nodo ez bada
 		aurreko_it->hurrengoa = it->hurrengoa;
-	}else{
+	}else{ // Aurkitutako nodoa lehen nodoa bada
 		malloc_list = it->hurrengoa;
 	}
 	aurreko_it = free_list;
 	it = aurreko_it->hurrengoa;
-	while (it!=NULL){
+	while (it!=NULL){ // Hutsuneen zerrenda iteratu, Nodoari dagokion tartea aurkitzeko
 		if (it->hasiera > addr){
 			break;
 		}
@@ -233,15 +231,15 @@ static void release(seL4_Word addr){
 		it = it->hurrengoa;
 		
 	}
-	if (addr<aurreko_it->hasiera){
+	if (addr<aurreko_it->hasiera){ // Nodoari dagokion lekua lehen posizioa bada
 		free_list = askatu;
 		askatu->hurrengoa = aurreko_it;
-	}else{
+	}else{ // Nodoaren posizioa ez bada lehen posizioa
 		aurreko_it->hurrengoa = askatu;
 		askatu->hurrengoa = it;
 	}
 	t_kont++;
-	if (t_kont==10){
+	if (t_kont==10){ // 10 aldiz release exekutatuz gero, trinkotzea exekutatu
 		trinkotzea();
 		t_kont = 0;
 	}
@@ -254,8 +252,8 @@ static void release(seL4_Word addr){
 void trinkotzea(){
 	struct Nodo* it = free_list;
 	struct Nodo* aurreko_it = NULL;
-	while (it!=NULL){
-		if(aurreko_it!=NULL && aurreko_it->bukaera==it->hasiera){
+	while (it!=NULL){ // Hutsuneen zerrenda iteratu
+		if(aurreko_it!=NULL && aurreko_it->bukaera==it->hasiera){ //Oraingo eta hurrengo nodoa jarraian badaude, nodoak fusionatu
 			aurreko_it->bukaera = it->bukaera;
 			aurreko_it->hurrengoa = it->hurrengoa;
 			it = it->hurrengoa;
